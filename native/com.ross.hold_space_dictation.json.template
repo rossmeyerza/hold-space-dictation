@@ -1,0 +1,9 @@
+{
+  "name": "com.ross.hold_space_dictation",
+  "description": "Native host for Hold Space Dictation",
+  "path": "__HOST_PATH__",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://__EXTENSION_ID__/"
+  ]
+}

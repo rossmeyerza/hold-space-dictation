@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Hold Space Dictation",
+  "description": "Hold Space in an editable field to dictate with local Whisper.",
+  "version": "0.1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqBbg2U8ydefzckI1k7weDdKrXf7/JVgnsctBnAJZUgvvrVyLK2SBDfqitDMV5qd+9d4MSbp3djYeOUlzLrfVKTHJKFvtGQ/no8mjUB08UAjMbkQhnUiBa5PrPKTqpvPj9B7MGZavOYHwrTy3bxdcwJQIcaCzNOreP3pD3xXtLVqTXeD4EBIld4u86a2PeWELdEz6kVhxSQ+OWa22QXccrKrnMdKQR3hBD0kz9j5ApFDw8WB1971atW8RtS+C3vPE512O0HaViV5oWwSmn+xmrKYHqMQj6YVBzucP8iKLXSsy79y0K4yj75JJKikZ0OoJuJJbj/uqfpbqSKynRu/8owIDAQAB",
+  "permissions": ["nativeMessaging", "notifications", "storage"],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "icons": {
+    "128": "icons/icon.svg"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content.js"],
+      "css": ["src/content.css"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "action": {
+    "default_title": "Hold Space Dictation",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "128": "icons/icon.svg"
+    }
+  }
+}

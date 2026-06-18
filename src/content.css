@@ -1,0 +1,29 @@
+#hsd-status {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 2147483647;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #101418;
+  color: #f7fafc;
+  font: 13px/1.35 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+}
+
+#hsd-status[data-state="recording"] {
+  background: #8b1e2d;
+}
+
+#hsd-status[data-state="transcribing"] {
+  background: #1b4f72;
+}
+
+#hsd-status[data-state="done"] {
+  background: #1f6f43;
+}
+
+#hsd-status[data-state="error"] {
+  background: #8a3a0a;
+}

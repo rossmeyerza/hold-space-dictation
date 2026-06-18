@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Hold Space Dictation</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Dictation</h1>
+        <span id="status">Saved</span>
+      </header>
+
+      <label>
+        <span>Model</span>
+        <select id="model">
+          <option value="small">Small English</option>
+          <option value="medium">Medium English</option>
+          <option value="large">Large v3</option>
+          <option value="turbo">Large v3 Turbo</option>
+        </select>
+      </label>
+
+      <label>
+        <span>Hold delay</span>
+        <div class="row">
+          <input id="holdDelayMs" type="range" min="150" max="1500" step="50">
+          <output id="holdDelayValue"></output>
+        </div>
+      </label>
+
+      <label>
+        <span>Minimum capture</span>
+        <div class="row">
+          <input id="minRecordingMs" type="range" min="0" max="3000" step="100">
+          <output id="minRecordingValue"></output>
+        </div>
+      </label>
+
+      <button id="reset" type="button">Reset</button>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
