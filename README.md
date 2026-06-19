@@ -10,6 +10,7 @@ The extension is built for Linux desktops. It uses a Chrome MV3 extension plus a
 - Tap `Space` normally to insert a normal space.
 - Local transcription through `whisper-cli` from whisper.cpp.
 - Configurable Whisper model, hold delay, and minimum capture duration from the extension popup.
+- Configurable release tail to keep recording briefly after Space is released.
 - Optional PulseAudio/PipeWire audio ducking through `pactl`, if available.
 - GPU transcription retry on CPU when whisper reports GPU or allocation failures.
 
@@ -63,6 +64,7 @@ Click the extension icon to configure:
 - Whisper model: small, medium, large, or turbo.
 - Hold delay before dictation starts.
 - Minimum capture duration before transcription starts.
+- Release tail after you let go of `Space`, useful when you release slightly before your final words finish.
 
 ## Models
 

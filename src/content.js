@@ -2,7 +2,8 @@ const SOURCE = "hold-space-dictation";
 const DEFAULT_SETTINGS = {
   model: "small",
   holdDelayMs: 350,
-  minRecordingMs: 900
+  minRecordingMs: 900,
+  releaseTailMs: 2000
 };
 
 let pendingTimer = null;
@@ -34,7 +35,8 @@ function normalizeSettings(value) {
   return {
     model,
     holdDelayMs: clampNumber(value.holdDelayMs, 150, 1500, DEFAULT_SETTINGS.holdDelayMs),
-    minRecordingMs: clampNumber(value.minRecordingMs, 0, 3000, DEFAULT_SETTINGS.minRecordingMs)
+    minRecordingMs: clampNumber(value.minRecordingMs, 0, 3000, DEFAULT_SETTINGS.minRecordingMs),
+    releaseTailMs: clampNumber(value.releaseTailMs, 0, 3000, DEFAULT_SETTINGS.releaseTailMs)
   };
 }
 
@@ -284,6 +286,11 @@ async function stopRecording() {
   if (remainingMs > 0) {
     showStatus("Finishing capture...", "recording");
     await delay(remainingMs);
+  }
+
+  if (settings.releaseTailMs > 0) {
+    showStatus("Capturing final words...", "recording");
+    await delay(settings.releaseTailMs);
   }
 
   recording = false;
