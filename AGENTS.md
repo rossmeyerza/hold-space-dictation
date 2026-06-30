@@ -12,7 +12,7 @@ hold-space-dictation/
 ├── src/               — background service worker, content script, overlay CSS
 ├── popup/             — extension popup settings UI
 ├── native/host.py     — native messaging host: recording, transcription, paste/type fallback, audio ducking
-├── scripts/           — native host installer
+├── scripts/           — native host installer and shared Flow/extension ducking helper
 ├── README.md          — user-facing setup and configuration docs
 ├── LICENSE            — MIT license
 └── AGENTS.md          — this file
@@ -22,7 +22,7 @@ hold-space-dictation/
 
 - `src/content.js` owns browser input handling: tap-vs-hold detection, status overlay, target/selection preservation, Chrome storage settings, and insertion into normal inputs/contenteditable fields.
 - `src/background.js` owns the Chrome native messaging port and request/response routing to the native host.
-- `native/host.py` owns local OS work: `parecord`, `whisper-cli`, `wl-copy`, `wtype`, desktop notifications, and optional `pactl` audio ducking.
+- `native/host.py` owns local OS work: `parecord`, `whisper-cli`, `wl-copy`, `wtype`, desktop notifications, and optional audio ducking through `scripts/flow-audio-duck` / `~/.local/bin/flow-audio-duck`.
 - `popup/popup.*` owns user settings stored in `chrome.storage.local`.
 
 ## Recording Lifecycle
@@ -31,16 +31,16 @@ hold-space-dictation/
 2. Content script sends `start` with the selected model to the background worker.
 3. Background worker forwards `start` to `native/host.py`.
 4. Native host starts `parecord`, then best-effort ducks active playback streams.
-5. On key release, content script waits `releaseTailMs` before sending `stop`; this intentionally captures final words after the user lets go.
-6. Native host stops `parecord`, restores ducked playback streams, runs `whisper-cli`, and returns text.
+5. On key release, content script waits until `minRecordingMs` has elapsed before sending `stop`; this avoids clipping very short utterances.
+6. Native host stops `parecord`, restores ducked/paused playback, runs `whisper-cli`, and returns text.
 7. Content script inserts the returned text into the original target.
 
 ## Audio Ducking
 
-- Audio ducking lives only in `native/host.py` because the native process can access local audio tools.
-- `pactl` is optional. Missing `pactl`, unsupported audio servers, vanished streams, or command failures must never break dictation.
-- Keep ducking best-effort and scoped to active sink inputs: save original stream volumes, fade to `FLOW_AUDIO_DUCK_VOLUME`, restore after `stop` or `cancel`.
-- Default fade settings are controlled by `FLOW_AUDIO_DUCK_FADE_MS` and `FLOW_AUDIO_DUCK_FADE_STEPS`.
+- Audio ducking should be shared through `scripts/flow-audio-duck` where possible because Flow and FlowD call the installed copy at `~/.local/bin/flow-audio-duck`.
+- `pactl` and `playerctl` are optional. Missing tools, unsupported audio servers, vanished streams, or command failures must never break dictation.
+- Keep ducking best-effort and scoped to active playback: save original stream volumes, fade to `FLOW_AUDIO_DUCK_VOLUME` / `FLOW_DUCK_VOLUME` (default `0`), pause players that were already playing, resume them on restore, then fade volume back up.
+- Default fade and pause settings are controlled by `FLOW_AUDIO_DUCK_FADE_MS`, `FLOW_AUDIO_DUCK_FADE_STEPS`, `FLOW_DUCK_PAUSE`, and `FLOW_DUCK_RESUME_DELAY_MS`.
 
 ## Settings
 
@@ -51,7 +51,6 @@ Current browser settings:
 - `model`
 - `holdDelayMs`
 - `minRecordingMs`
-- `releaseTailMs`
 
 Native host settings are environment variables documented in `README.md`, currently prefixed with `FLOW_`.
 

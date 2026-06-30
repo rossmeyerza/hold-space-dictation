@@ -96,11 +96,14 @@ The native host reads environment variables when Chrome starts it.
 | `FLOW_WHISPER_BIN` | `whisper-cli` | Whisper CLI binary name or absolute path |
 | `FLOW_RECORD_READY_DELAY_MS` | `150` | Delay before reporting recording as ready |
 | `FLOW_AUDIO_DUCK` | `1` | Set to `0`, `false`, `off`, or `no` to disable ducking |
-| `FLOW_AUDIO_DUCK_VOLUME` | `25` | Target playback stream volume while recording |
+| `FLOW_AUDIO_DUCK_HELPER` | `~/.local/bin/flow-audio-duck` | Shared ducking helper used when executable |
+| `FLOW_AUDIO_DUCK_VOLUME` | `0` | Target playback stream volume while recording |
 | `FLOW_AUDIO_DUCK_FADE_MS` | `450` | Fade duration for duck/restore transitions |
 | `FLOW_AUDIO_DUCK_FADE_STEPS` | `12` | Number of volume steps used during each fade |
+| `FLOW_DUCK_PAUSE` | `1` | When using the shared helper, pause currently playing MPRIS players after fading down |
+| `FLOW_DUCK_RESUME_DELAY_MS` | `250` | Delay after resuming players before fading volumes back up |
 
-Audio ducking is best-effort. If `pactl` is missing, cannot connect to the audio server, or a playback stream disappears, the native host ignores that failure and continues dictation.
+Audio ducking is best-effort. By default the shared helper fades active streams to zero, pauses players that were already playing, resumes those players on restore, then fades volume back up. If `pactl`, `playerctl`, or an audio stream is unavailable, dictation continues.
 
 ## Native Messaging
 

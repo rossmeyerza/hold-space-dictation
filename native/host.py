@@ -34,14 +34,17 @@ def env_int(name, default):
 
 RECORD_READY_DELAY_MS = env_int("FLOW_RECORD_READY_DELAY_MS", 150)
 AUDIO_DUCK_ENABLED = os.environ.get("FLOW_AUDIO_DUCK", "1").lower() not in {"0", "false", "off", "no"}
-AUDIO_DUCK_VOLUME = env_int("FLOW_AUDIO_DUCK_VOLUME", 25)
+AUDIO_DUCK_HELPER = Path(os.path.expanduser(os.environ.get("FLOW_AUDIO_DUCK_HELPER", "~/.local/bin/flow-audio-duck")))
+AUDIO_DUCK_VOLUME = env_int("FLOW_AUDIO_DUCK_VOLUME", 0)
 AUDIO_DUCK_FADE_MS = env_int("FLOW_AUDIO_DUCK_FADE_MS", 450)
 AUDIO_DUCK_FADE_STEPS = env_int("FLOW_AUDIO_DUCK_FADE_STEPS", 12)
 
 
 class AudioDucker:
-    def __init__(self, enabled=True, target_volume=25, fade_ms=450, fade_steps=12):
+    def __init__(self, enabled=True, helper=None, target_volume=25, fade_ms=450, fade_steps=12):
         self.enabled = enabled
+        self.helper = helper
+        self.using_helper = False
         self.target_volume = max(0, min(150, target_volume))
         self.fade_ms = max(0, fade_ms)
         self.fade_steps = max(1, fade_steps)
@@ -50,6 +53,10 @@ class AudioDucker:
 
     def duck(self):
         if not self.enabled or self.active:
+            return
+        if self._run_helper("duck"):
+            self.using_helper = True
+            self.active = True
             return
         try:
             inputs = self._sink_inputs()
@@ -67,6 +74,12 @@ class AudioDucker:
             self.active = False
 
     def restore(self):
+        if self.using_helper:
+            self._run_helper("restore")
+            self.using_helper = False
+            self.ducked_inputs = []
+            self.active = False
+            return
         if not self.active or not self.ducked_inputs:
             return
         ducked = self.ducked_inputs
@@ -90,6 +103,25 @@ class AudioDucker:
         if result.returncode != 0:
             return []
         return [line.split()[0] for line in result.stdout.splitlines() if line.split()]
+
+    def _run_helper(self, action):
+        if not self.helper or not self.helper.exists() or not os.access(self.helper, os.X_OK):
+            return False
+        env = os.environ.copy()
+        env.setdefault("FLOW_DUCK_VOLUME", f"{self.target_volume}%")
+        env.setdefault("FLOW_DUCK_FADE_MS", str(self.fade_ms))
+        env.setdefault("FLOW_DUCK_FADE_STEPS", str(self.fade_steps))
+        try:
+            subprocess.run(
+                [str(self.helper), action],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=env,
+            )
+            return True
+        except OSError:
+            return False
 
     def _current_volumes(self):
         result = subprocess.run(
@@ -148,6 +180,7 @@ class AudioDucker:
 
 audio_ducker = AudioDucker(
     enabled=AUDIO_DUCK_ENABLED,
+    helper=AUDIO_DUCK_HELPER,
     target_volume=AUDIO_DUCK_VOLUME,
     fade_ms=AUDIO_DUCK_FADE_MS,
     fade_steps=AUDIO_DUCK_FADE_STEPS,

@@ -1,0 +1,184 @@
+#!/bin/bash
+
+set -u
+
+APP=Flow
+STATE_FILE="${FLOW_DUCK_STATE:-/tmp/flow-audio-duck.state}"
+TARGET_VOLUME="${FLOW_DUCK_VOLUME:-0%}"
+FADE_MS="${FLOW_DUCK_FADE_MS:-450}"
+FADE_STEPS="${FLOW_DUCK_FADE_STEPS:-12}"
+PAUSE_PLAYERS="${FLOW_DUCK_PAUSE:-1}"
+RESUME_DELAY_MS="${FLOW_DUCK_RESUME_DELAY_MS:-250}"
+
+notify_debug() {
+    if [[ ${FLOW_DUCK_DEBUG:-0} == 1 ]] && command -v notify-send >/dev/null 2>&1; then
+        notify-send --app-name="$APP" --expire-time=1500 "$APP audio" "$1"
+    fi
+}
+
+sink_inputs() {
+    pactl list short sink-inputs 2>/dev/null | awk '{print $1}'
+}
+
+playing_players() {
+    command -v playerctl >/dev/null 2>&1 || return 0
+    local player status
+    while IFS= read -r player; do
+        [[ -n $player ]] || continue
+        status=$(playerctl -p "$player" status 2>/dev/null || true)
+        [[ $status == "Playing" ]] && printf '%s\n' "$player"
+    done < <(playerctl -l 2>/dev/null)
+}
+
+current_volume() {
+    local id=$1
+    pactl list sink-inputs 2>/dev/null \
+        | awk -v target="#$id" '
+            $1 == "Sink" && $2 == "Input" { in_target = ($3 == target) }
+            in_target && $1 == "Volume:" {
+                split($0, parts, "/")
+                gsub(/[[:space:]]/, "", parts[2])
+                print parts[2]
+                exit
+            }
+        '
+}
+
+volume_percent() {
+    local volume=$1
+    volume=${volume%%%}
+    [[ $volume =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "$volume"
+}
+
+ease_percent() {
+    local step=$1
+    local steps=$2
+    awk -v step="$step" -v steps="$steps" '
+        BEGIN {
+            if (steps <= 0) {
+                print 100
+                exit
+            }
+            t = step / steps
+            eased = (3 * t * t - 2 * t * t * t) * 100
+            printf "%.0f\n", eased
+        }
+    '
+}
+
+fade_volume() {
+    local id=$1
+    local from=$2
+    local to=$3
+    local steps=${FADE_STEPS:-12}
+    local fade_ms=${FADE_MS:-450}
+
+    [[ $steps =~ ^[0-9]+$ ]] || steps=12
+    [[ $fade_ms =~ ^[0-9]+$ ]] || fade_ms=450
+
+    if (( steps <= 1 || fade_ms <= 0 || from == to )); then
+        pactl set-sink-input-volume "$id" "${to}%" >/dev/null 2>&1 || true
+        return
+    fi
+
+    local delay
+    delay=$(awk -v ms="$fade_ms" -v steps="$steps" 'BEGIN { printf "%.3f\n", (ms / steps) / 1000 }')
+
+    local step eased value
+    for (( step = 1; step <= steps; step++ )); do
+        eased=$(ease_percent "$step" "$steps")
+        value=$(( from + ((to - from) * eased / 100) ))
+        pactl set-sink-input-volume "$id" "${value}%" >/dev/null 2>&1 || true
+        sleep "$delay"
+    done
+}
+
+duck() {
+    command -v pactl >/dev/null 2>&1 || exit 0
+    [[ -f $STATE_FILE ]] && exit 0
+
+    local tmp id volume from target count=0 player player_count=0
+    tmp=$(mktemp "${STATE_FILE}.XXXXXX") || exit 0
+    target=$(volume_percent "$TARGET_VOLUME") || target=0
+
+    if [[ $PAUSE_PLAYERS != 0 && $PAUSE_PLAYERS != false && $PAUSE_PLAYERS != off && $PAUSE_PLAYERS != no ]]; then
+        while IFS= read -r player; do
+            [[ -n $player ]] || continue
+            printf 'player\t%s\n' "$player" >> "$tmp"
+            player_count=$((player_count + 1))
+        done < <(playing_players)
+    fi
+
+    while read -r id; do
+        [[ -n $id ]] || continue
+        volume=$(current_volume "$id")
+        [[ -n $volume ]] || continue
+        from=$(volume_percent "$volume") || continue
+        printf 'sink\t%s\t%s\n' "$id" "$volume" >> "$tmp"
+        fade_volume "$id" "$from" "$target"
+        count=$((count + 1))
+    done < <(sink_inputs)
+
+    if (( player_count > 0 )); then
+        while IFS= read -r player; do
+            [[ -n $player ]] || continue
+            playerctl -p "$player" pause >/dev/null 2>&1 || true
+        done < <(awk -F '\t' '$1 == "player" { print $2 }' "$tmp")
+    fi
+
+    if (( count > 0 || player_count > 0 )); then
+        mv "$tmp" "$STATE_FILE"
+        notify_debug "Dimmed $count stream(s) to $TARGET_VOLUME; paused $player_count player(s)"
+    else
+        rm -f "$tmp"
+    fi
+}
+
+restore() {
+    command -v pactl >/dev/null 2>&1 || exit 0
+    [[ -f $STATE_FILE ]] || exit 0
+
+    local id volume current from to count=0 player player_count=0 delay
+    if command -v playerctl >/dev/null 2>&1; then
+        while IFS= read -r player; do
+            [[ -n $player ]] || continue
+            playerctl -p "$player" play >/dev/null 2>&1 || true
+            player_count=$((player_count + 1))
+        done < <(awk -F '\t' '$1 == "player" { print $2 }' "$STATE_FILE")
+    fi
+
+    delay=$(awk -v ms="$RESUME_DELAY_MS" 'BEGIN { printf "%.3f\n", ms / 1000 }')
+    [[ $player_count -gt 0 ]] && sleep "$delay"
+
+    while IFS=$'\t' read -r kind id volume; do
+        if [[ $kind != "sink" && -z ${volume:-} ]]; then
+            volume=$id
+            id=$kind
+            kind=sink
+        fi
+        [[ $kind == "sink" ]] || continue
+        [[ -n ${id:-} && -n ${volume:-} ]] || continue
+        current=$(current_volume "$id")
+        from=$(volume_percent "$current") || from=$(volume_percent "$TARGET_VOLUME") || from=0
+        to=$(volume_percent "$volume") || continue
+        fade_volume "$id" "$from" "$to"
+        count=$((count + 1))
+    done < "$STATE_FILE"
+
+    rm -f "$STATE_FILE"
+    notify_debug "Resumed $player_count player(s); restored $count stream(s)"
+}
+
+case "${1:-}" in
+    duck)
+        duck
+        ;;
+    restore)
+        restore
+        ;;
+    *)
+        echo "usage: ${0##*/} duck|restore" >&2
+        exit 2
+        ;;
+esac
