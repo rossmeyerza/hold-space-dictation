@@ -9,7 +9,7 @@ The extension is built for Linux desktops. It uses a Chrome MV3 extension plus a
 - Hold `Space` in inputs, textareas, and contenteditable fields to dictate.
 - Tap `Space` normally to insert a normal space.
 - Local streaming transcription: the native host sends the audio to a transcriber while you speak,
-  so the text is ready about 0.25 s after you release `Space` (plus the release tail).
+  so the text is ready about 0.25 s after the release tail (default 500 ms) ends.
 - Configurable hold delay and minimum capture duration from the extension popup.
 - Configurable release tail to keep recording briefly after Space is released.
 - Optional PulseAudio/PipeWire audio ducking through `pactl`, if available.

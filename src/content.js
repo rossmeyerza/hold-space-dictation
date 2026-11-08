@@ -2,7 +2,7 @@ const SOURCE = "hold-space-dictation";
 const DEFAULT_SETTINGS = {
   holdDelayMs: 350,
   minRecordingMs: 900,
-  releaseTailMs: 2000
+  releaseTailMs: 500
 };
 
 let pendingTimer = null;

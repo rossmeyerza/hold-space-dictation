@@ -1,7 +1,7 @@
 const DEFAULT_SETTINGS = {
   holdDelayMs: 350,
   minRecordingMs: 900,
-  releaseTailMs: 2000
+  releaseTailMs: 500
 };
 
 const controls = {

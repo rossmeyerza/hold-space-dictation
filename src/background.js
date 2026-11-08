@@ -1,5 +1,13 @@
 const HOST_NAME = "com.ross.hold_space_dictation";
 
+// The popup stores every setting, so a saved 2000 ms release tail would outlive the new default.
+// Set it to 500 ms once, when the extension is installed or reloaded.
+chrome.runtime.onInstalled.addListener(async () => {
+  const { releaseTailMigrated500 } = await chrome.storage.local.get("releaseTailMigrated500");
+  if (releaseTailMigrated500) return;
+  await chrome.storage.local.set({ releaseTailMs: 500, releaseTailMigrated500: true });
+});
+
 let port = null;
 let nextRequestId = 1;
 const pending = new Map();
