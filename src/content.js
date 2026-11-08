@@ -1,6 +1,5 @@
 const SOURCE = "hold-space-dictation";
 const DEFAULT_SETTINGS = {
-  model: "small",
   holdDelayMs: 350,
   minRecordingMs: 900,
   releaseTailMs: 2000
@@ -29,11 +28,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 });
 
 function normalizeSettings(value) {
-  const model = ["small", "medium", "large", "turbo"].includes(value.model)
-    ? value.model
-    : DEFAULT_SETTINGS.model;
   return {
-    model,
     holdDelayMs: clampNumber(value.holdDelayMs, 150, 1500, DEFAULT_SETTINGS.holdDelayMs),
     minRecordingMs: clampNumber(value.minRecordingMs, 0, 3000, DEFAULT_SETTINGS.minRecordingMs),
     releaseTailMs: clampNumber(value.releaseTailMs, 0, 3000, DEFAULT_SETTINGS.releaseTailMs)
@@ -244,7 +239,7 @@ async function startRecording(target) {
   recordingSelection = saveSelection(target);
   showStatus("Starting microphone...", "transcribing");
 
-  startPromise = message("start", { model: settings.model }).then((response) => {
+  startPromise = message("start").then((response) => {
     if (!response?.ok) throw new Error(response?.error || "Could not start recording");
     recordingStartedAt = Date.now();
     showStatus("Recording - release Space to insert", "recording");
@@ -266,7 +261,7 @@ async function startContentEditableRecording(target) {
   target.focus();
   await message("key", { key: "BackSpace" });
   recordingSelection = saveSelection(target);
-  startPromise = message("start", { model: settings.model }).then((response) => {
+  startPromise = message("start").then((response) => {
     if (!response?.ok) throw new Error(response?.error || "Could not start recording");
     recordingStartedAt = Date.now();
     showStatus("Recording - release Space to insert", "recording");

@@ -1,26 +1,24 @@
 #!/usr/bin/env python3
 import json
 import os
+import queue
 import re
+import shlex
 import signal
 import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+import wave
 from pathlib import Path
 
 
 APP_NAME = "Hold Space Dictation"
-MODEL_DIR = Path(os.path.expanduser(os.environ.get("FLOW_MODEL_DIR", "~/.local/lib/whisper")))
-THREADS = os.environ.get("FLOW_THREADS", "4")
-WHISPER_BIN = os.environ.get("FLOW_WHISPER_BIN", "whisper-cli")
-MODEL_FILES = {
-    "small": "ggml-small.en.bin",
-    "medium": "ggml-medium.en.bin",
-    "large": "ggml-large-v3.bin",
-    "turbo": "ggml-large-v3-turbo.bin",
-}
+# Flow's Parakeet engine: `--stream` reads raw audio from stdin, `FILE.wav` transcribes a file.
+TRANSCRIBE_BIN = os.path.expanduser(os.environ.get("FLOW_TRANSCRIBE_BIN", "~/.local/bin/flow-transcribe"))
+CHUNK_BYTES = 3200  # 100 ms of 16 kHz mono s16le
 
 recording = None
 
@@ -214,61 +212,104 @@ def notify(body):
         pass
 
 
-def model_path(model_name):
-    filename = MODEL_FILES.get(model_name)
-    if not filename:
-        raise RuntimeError(f"Unknown model: {model_name}")
-    path = MODEL_DIR / filename
-    if not path.exists():
-        raise RuntimeError(f"Missing model: {path}")
-    return path
+def capture_command():
+    # Tests replace the microphone with any command that writes 16 kHz mono s16le to stdout.
+    if os.environ.get("HOLD_SPACE_CAPTURE"):
+        return shlex.split(os.environ["HOLD_SPACE_CAPTURE"])
+    return ["parecord", "--raw", "--format=s16le", "--rate=16000", "--channels=1", "--latency-msec=100"]
 
 
-def normalize_whisper_output(raw):
-    lines = []
-    for line in raw.splitlines():
-        line = re.sub(r"^\[[^]]*\]\s*", "", line).strip()
-        if line:
-            lines.append(line)
-    return " ".join(lines).strip()
+class Recording:
+    """Record to a WAV file and stream the same audio into Parakeet while the user speaks."""
+
+    def __init__(self):
+        self.audio_file = Path(tempfile.gettempdir()) / f"hold-space-dictation-{os.getpid()}.wav"
+        self.audio_file.unlink(missing_ok=True)
+        self.wav = wave.open(str(self.audio_file), "wb")
+        self.wav.setnchannels(1)
+        self.wav.setsampwidth(2)
+        self.wav.setframerate(16000)
+        self.audio_bytes = 0
+        self.chunks = queue.Queue()
+        # Start the streamer before the microphone, so the model starts to load first.
+        self.streamer = subprocess.Popen([TRANSCRIBE_BIN, "--stream"], stdin=subprocess.PIPE,
+                                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self.capture = subprocess.Popen(capture_command(), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self.reader = threading.Thread(target=self._read, daemon=True)
+        self.writer = threading.Thread(target=self._feed, daemon=True)
+        self.reader.start()
+        self.writer.start()
+
+    def _read(self):
+        try:
+            while data := self.capture.stdout.read(CHUNK_BYTES):
+                self.wav.writeframes(data)
+                self.audio_bytes += len(data)
+                self.chunks.put(data)
+        finally:
+            self.wav.close()
+            self.chunks.put(None)
+
+    def _feed(self):
+        """A separate thread, so a slow model load never blocks the microphone."""
+        try:
+            while (data := self.chunks.get()) is not None:
+                self.streamer.stdin.write(data)
+                self.streamer.stdin.flush()  # unflushed audio would be decoded only after release
+            self.streamer.stdin.close()
+        except OSError:
+            pass  # the streamer failed; text() falls back to the WAV file
+
+    def stop_capture(self):
+        if self.capture.poll() is None:
+            self.capture.send_signal(signal.SIGINT)
+            try:
+                self.capture.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                self.capture.kill()
+        self.reader.join(timeout=5)
+
+    def text(self):
+        """Return the streamed text, or transcribe the WAV file when the stream failed."""
+        self.writer.join(timeout=10)
+        try:
+            out, _ = self.streamer.communicate(timeout=60)
+            if self.streamer.returncode == 0:
+                return " ".join(out.decode(errors="replace").split())
+        except subprocess.TimeoutExpired:
+            self.streamer.kill()
+        result = subprocess.run([TRANSCRIBE_BIN, str(self.audio_file)], capture_output=True, text=True,
+                                timeout=120, check=False)
+        if result.returncode != 0:
+            detail = " ".join(result.stderr.splitlines()[-3:])
+            raise RuntimeError(f"Transcription failed: {detail}")
+        return " ".join(result.stdout.split())
+
+    def discard(self):
+        self.stop_capture()
+        if self.streamer.poll() is None:
+            self.streamer.kill()
+            self.streamer.wait(timeout=5)
+        self.audio_file.unlink(missing_ok=True)
 
 
-def start_recording(model_name):
+def start_recording():
     global recording
     if recording:
         cancel_recording()
-    model = model_path(model_name)
-
-    audio_file = Path(tempfile.gettempdir()) / f"hold-space-dictation-{os.getpid()}.wav"
-    if audio_file.exists():
-        audio_file.unlink()
-
-    process = subprocess.Popen(
-        ["parecord", "--file-format=wav", "--rate=16000", "--channels=1", str(audio_file)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    recording = {
-        "process": process,
-        "audio_file": audio_file,
-        "model": model,
-    }
+    if not os.access(TRANSCRIBE_BIN, os.X_OK):
+        raise RuntimeError(f"Missing transcriber: {TRANSCRIBE_BIN}")
+    recording = Recording()
     audio_ducker.duck()
     time.sleep(max(0, RECORD_READY_DELAY_MS) / 1000)
-    notify(f"Recording ({model_name})...")
+    notify("Recording...")
 
 
 def cancel_recording():
     global recording
     if not recording:
         return
-    process = recording["process"]
-    if process.poll() is None:
-        process.send_signal(signal.SIGINT)
-        try:
-            process.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            process.kill()
+    recording.discard()
     audio_ducker.restore()
     recording = None
 
@@ -277,48 +318,20 @@ def transcribe_recording():
     global recording
     if not recording:
         raise RuntimeError("No active recording")
-
     current = recording
     recording = None
-    process = current["process"]
-    audio_file = current["audio_file"]
-
-    if process.poll() is None:
-        process.send_signal(signal.SIGINT)
-        try:
-            process.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            process.kill()
+    current.stop_capture()
     audio_ducker.restore()
-
-    if not audio_file.exists() or audio_file.stat().st_size == 0:
+    if current.audio_bytes == 0:
+        current.discard()
         raise RuntimeError("No audio captured")
-
-    notify("Transcribing...")
-    with tempfile.NamedTemporaryFile("w+", delete=False) as err_file:
-        err_path = err_file.name
-
-    command = [WHISPER_BIN, "-m", str(current["model"]), "-t", THREADS, "-nt", "-f", str(audio_file)]
-    raw = subprocess.run(command, text=True, capture_output=True, check=False)
-
-    if not raw.stdout and re.search(r"vulkan|out of|allocat|gpu|failed to initialize", raw.stderr, re.I):
-        cpu_command = [WHISPER_BIN, "-ng", "-m", str(current["model"]), "-t", THREADS, "-nt", "-f", str(audio_file)]
-        raw = subprocess.run(cpu_command, text=True, capture_output=True, check=False)
-
     try:
-        os.unlink(err_path)
-    except OSError:
-        pass
-
-    if raw.returncode != 0 and not raw.stdout:
-        detail = " ".join(raw.stderr.splitlines()[-3:])
-        raise RuntimeError(f"whisper-cli failed: {detail}")
-
-    text = normalize_whisper_output(raw.stdout)
+        text = current.text()
+    finally:
+        current.audio_file.unlink(missing_ok=True)
     if not text:
         notify("No speech detected")
         return ""
-
     notify("Transcription ready")
     return text
 
@@ -367,7 +380,7 @@ def handle(message):
 
     try:
         if command == "start":
-            start_recording(message.get("model", "small"))
+            start_recording()  # an older popup may still send a Whisper model name; it is ignored
             return {"requestId": request_id, "ok": True}
         if command == "stop":
             return {"requestId": request_id, "ok": True, "text": transcribe_recording()}

@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A Chrome MV3 extension for local push-to-talk dictation. The user holds `Space` in an editable browser field, the content script asks a native messaging host to record audio, and the resulting local Whisper transcription is inserted back into the page.
+A Chrome MV3 extension for local push-to-talk dictation. The user holds `Space` in an editable browser field, the content script asks a native messaging host to record audio, and the resulting local transcription is inserted back into the page. The host streams the audio into `FLOW_TRANSCRIBE_BIN --stream` while the user speaks (see README, Transcriber).
 
 ## Files
 
@@ -22,17 +22,17 @@ hold-space-dictation/
 
 - `src/content.js` owns browser input handling: tap-vs-hold detection, status overlay, target/selection preservation, Chrome storage settings, and insertion into normal inputs/contenteditable fields.
 - `src/background.js` owns the Chrome native messaging port and request/response routing to the native host.
-- `native/host.py` owns local OS work: `parecord`, `whisper-cli`, `wl-copy`, `wtype`, desktop notifications, and optional audio ducking through `scripts/flow-audio-duck` / `~/.local/bin/flow-audio-duck`.
+- `native/host.py` owns local OS work: `parecord`, the transcriber (`FLOW_TRANSCRIBE_BIN`), `wl-copy`, `wtype`, desktop notifications, and optional audio ducking through `scripts/flow-audio-duck` / `~/.local/bin/flow-audio-duck`.
 - `popup/popup.*` owns user settings stored in `chrome.storage.local`.
 
 ## Recording Lifecycle
 
 1. Content script detects a held `Space` after `holdDelayMs`.
-2. Content script sends `start` with the selected model to the background worker.
+2. Content script sends `start` to the background worker. (An older version sent a Whisper model name; the host ignores it.)
 3. Background worker forwards `start` to `native/host.py`.
-4. Native host starts `parecord`, then best-effort ducks active playback streams.
+4. Native host starts `FLOW_TRANSCRIBE_BIN --stream`, then `parecord --raw`. A reader thread writes the audio to a WAV file and a queue; a writer thread feeds the queue to the transcriber and flushes each chunk (unflushed audio is decoded only after release). Then it best-effort ducks active playback streams.
 5. On key release, content script waits until `minRecordingMs` has elapsed before sending `stop`; this avoids clipping very short utterances.
-6. Native host stops `parecord`, restores ducked/paused playback, runs `whisper-cli`, and returns text.
+6. Native host stops `parecord`, restores ducked/paused playback, closes the transcriber's stdin and returns its text. If the stream failed, it runs `FLOW_TRANSCRIBE_BIN <wav>` instead. It deletes the WAV file afterwards.
 7. Content script inserts the returned text into the original target.
 
 ## Audio Ducking
@@ -48,9 +48,9 @@ Chrome storage settings live in `src/content.js` and `popup/popup.js`. Keep defa
 
 Current browser settings:
 
-- `model`
 - `holdDelayMs`
 - `minRecordingMs`
+- `releaseTailMs`
 
 Native host settings are environment variables documented in `README.md`, currently prefixed with `FLOW_`.
 

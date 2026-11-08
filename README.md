@@ -1,6 +1,6 @@
 # Hold Space Dictation
 
-Chrome extension for local push-to-talk dictation. Hold `Space` in an editable field, speak, release `Space`, and the extension inserts a local Whisper transcription into the field.
+Chrome extension for local push-to-talk dictation. Hold `Space` in an editable field, speak, release `Space`, and the extension inserts a local transcription into the field.
 
 The extension is built for Linux desktops. It uses a Chrome MV3 extension plus a native messaging host that runs local command-line tools.
 
@@ -8,11 +8,12 @@ The extension is built for Linux desktops. It uses a Chrome MV3 extension plus a
 
 - Hold `Space` in inputs, textareas, and contenteditable fields to dictate.
 - Tap `Space` normally to insert a normal space.
-- Local transcription through `whisper-cli` from whisper.cpp.
-- Configurable Whisper model, hold delay, and minimum capture duration from the extension popup.
+- Local streaming transcription: the native host sends the audio to a transcriber while you speak,
+  so the text is ready about 0.25 s after you release `Space` (plus the release tail).
+- Configurable hold delay and minimum capture duration from the extension popup.
 - Configurable release tail to keep recording briefly after Space is released.
 - Optional PulseAudio/PipeWire audio ducking through `pactl`, if available.
-- GPU transcription retry on CPU when whisper reports GPU or allocation failures.
+- If streaming fails, the host transcribes the saved recording instead.
 
 ## Requirements
 
@@ -20,8 +21,8 @@ Required:
 
 - Google Chrome or Chromium with extension developer mode enabled.
 - `parecord` for microphone capture.
-- `whisper-cli` from [whisper.cpp](https://github.com/ggerganov/whisper.cpp).
-- A whisper.cpp `.bin` model in `~/.local/lib/whisper/`, or a custom model directory via `FLOW_MODEL_DIR`.
+- A transcriber command, set with `FLOW_TRANSCRIBE_BIN` (default `~/.local/bin/flow-transcribe`).
+  See [Transcriber](#transcriber). The author uses Parakeet Unified English through transcribe.cpp.
 - `wl-copy` and `wtype` for native paste/type fallback paths on Wayland.
 
 Optional:
@@ -61,29 +62,23 @@ Focus an input, textarea, or contenteditable field.
 
 Click the extension icon to configure:
 
-- Whisper model: small, medium, large, or turbo.
 - Hold delay before dictation starts.
 - Minimum capture duration before transcription starts.
 - Release tail after you let go of `Space`, useful when you release slightly before your final words finish.
 
-## Models
+## Transcriber
 
-The native host defaults to:
+The native host does not include a speech model. It runs the command in `FLOW_TRANSCRIBE_BIN` in two ways:
 
-```text
-~/.local/lib/whisper/ggml-small.en.bin
-```
+- `<command> --stream`: the host writes raw 16 kHz mono signed 16-bit little-endian audio to stdin while
+  you speak, and closes stdin when you release `Space`. The command prints the transcript to stdout and
+  exits with code 0.
+- `<command> <file.wav>`: the fallback when streaming fails. The command prints the transcript of a
+  16 kHz mono PCM16 WAV file.
 
-Expected model filenames:
-
-| Popup model | Filename |
-|---|---|
-| `small` | `ggml-small.en.bin` |
-| `medium` | `ggml-medium.en.bin` |
-| `large` | `ggml-large-v3.bin` |
-| `turbo` | `ggml-large-v3-turbo.bin` |
-
-Set `FLOW_MODEL_DIR` if your models live somewhere else.
+The author's command is `flow-transcribe`, which streams into NVIDIA Parakeet Unified English 0.6B with
+[transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) on the GPU. Any command with this
+interface works, for example a short script around whisper.cpp.
 
 ## Native Host Configuration
 
@@ -91,9 +86,7 @@ The native host reads environment variables when Chrome starts it.
 
 | Variable | Default | Description |
 |---|---:|---|
-| `FLOW_MODEL_DIR` | `~/.local/lib/whisper` | Directory containing whisper.cpp `.bin` models |
-| `FLOW_THREADS` | `4` | Thread count passed to `whisper-cli` |
-| `FLOW_WHISPER_BIN` | `whisper-cli` | Whisper CLI binary name or absolute path |
+| `FLOW_TRANSCRIBE_BIN` | `~/.local/bin/flow-transcribe` | Transcriber command (see [Transcriber](#transcriber)) |
 | `FLOW_RECORD_READY_DELAY_MS` | `150` | Delay before reporting recording as ready |
 | `FLOW_AUDIO_DUCK` | `1` | Set to `0`, `false`, `off`, or `no` to disable ducking |
 | `FLOW_AUDIO_DUCK_HELPER` | `~/.local/bin/flow-audio-duck` | Shared ducking helper used when executable |

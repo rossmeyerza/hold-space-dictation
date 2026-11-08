@@ -56,7 +56,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   (async () => {
     if (message.command === "start") {
-      await sendNative("start", { model: message.model || "small" });
+      await sendNative("start");
       notify("Dictation", "Recording...");
       sendResponse({ ok: true });
       return;
