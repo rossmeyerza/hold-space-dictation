@@ -13,6 +13,7 @@ let recording = false;
 let startPromise = null;
 let recordingStartedAt = 0;
 let spaceDown = false;
+let staleNoticeShown = false;
 let settings = { ...DEFAULT_SETTINGS };
 
 chrome.storage.local.get(DEFAULT_SETTINGS, (stored) => {
@@ -60,8 +61,21 @@ function isEditable(element) {
   return textTypes.has(type) && !element.disabled && !element.readOnly;
 }
 
+const STALE_PAGE = "Dictation was updated. Reload this page to use it.";
+
+// After the extension is reloaded or updated, scripts in pages that were already open lose
+// chrome.runtime. Such a page must be reloaded to get the new script.
+function extensionAlive() {
+  return Boolean(globalThis.chrome?.runtime?.id);
+}
+
 function message(command, payload = {}) {
-  return chrome.runtime.sendMessage({ source: SOURCE, command, ...payload });
+  if (!extensionAlive()) return Promise.reject(new Error(STALE_PAGE));
+  try {
+    return chrome.runtime.sendMessage({ source: SOURCE, command, ...payload });
+  } catch {
+    return Promise.reject(new Error(STALE_PAGE));  // "Extension context invalidated"
+  }
 }
 
 function showStatus(text, state = "recording") {
@@ -314,6 +328,15 @@ document.addEventListener("keydown", (event) => {
   if (event.code !== "Space" || event.altKey || event.ctrlKey || event.metaKey) return;
   const target = event.target;
   if (!isEditable(target)) return;
+  if (!extensionAlive() && !recording && !pendingTimer) {
+    // A stale page: let Space type a normal space, and say once how to fix it.
+    if (!staleNoticeShown) {
+      staleNoticeShown = true;
+      showStatus(STALE_PAGE, "error");
+      hideStatus(4000);
+    }
+    return;
+  }
 
   if (target.isContentEditable) {
     if (recording) {
